@@ -191,22 +191,7 @@
         }
 
         // ================== 加载PBR纹理 ==================
-        // 使用 LoadingManager 等待所有纹理加载完成
-        const manager = new THREE.LoadingManager();
-        manager.onLoad = function () {
-            console.log("✅ PBR纹理加载完成");
-            // 所有纹理加载完成后再启动渲染
-            requestAnimationFrame(animate);
-            document.getElementById('info').innerHTML =
-                `✅ 阈限空间瓷砖走廊<br>` +
-                `位置: (${cameraPos.x.toFixed(2)}, ${cameraPos.y.toFixed(2)}, ${cameraPos.z.toFixed(2)})<br>` +
-                `朝向: yaw=${(cameraYaw * 180/Math.PI).toFixed(1)}°, pitch=${(cameraPitch * 180/Math.PI).toFixed(1)}°<br>` +
-                `帧率: -- FPS<br>` +
-                `步进: ${uniforms.uMaxSteps.value}次<br>` +
-                `调试模式: ${uniforms.uDebugMode.value ? '开' : '关'}`;
-        };
-
-        const textureLoader = new THREE.TextureLoader(manager);
+        const textureLoader = new THREE.TextureLoader();
 
         console.log("📦 加载PBR纹理...");
 
@@ -1200,7 +1185,26 @@
                 `步进: ${uniforms.uMaxSteps.value}次<br>` +
                 `调试模式: ${uniforms.uDebugMode.value ? '开' : '关'}`;
         }
-        
+
+        // ================== 等待纹理加载后再启动动画 ==================
+        // 检查所有纹理是否已加载完成（通过检查纹理的一个属性）
+        function checkTexturesLoaded() {
+            // Three.js 纹理加载完成后会有 image 属性
+            const textures = [albedoMap, normalMap, roughnessMap, aoMap, displacementMap];
+            const allLoaded = textures.every(t => t.image && t.image.width > 0);
+
+            if (allLoaded) {
+                console.log("✅ 所有纹理已加载完成，启动渲染");
+                animate();
+            } else {
+                console.log("⏳ 等待纹理加载...");
+                setTimeout(checkTexturesLoaded, 100);
+            }
+        }
+
+        // 开始检查纹理加载状态
+        checkTexturesLoaded();
+
         // ================== 窗口大小调整 ==================
         window.addEventListener('resize', function() {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -1291,7 +1295,7 @@
         console.log("  - +/-调整光照强度");
         console.log("  - animate() 会在纹理加载完成后自动启动");
 
-        // 注意：animate() 现在由 LoadingManager.onLoad 回调触发
+        // 注意：animate() 现在由 checkTexturesLoaded() 触发
     </script>
 </body>
 </html>
