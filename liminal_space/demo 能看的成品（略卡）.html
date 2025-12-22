@@ -191,8 +191,23 @@
         }
 
         // ================== 加载PBR纹理 ==================
-        const textureLoader = new THREE.TextureLoader();
-        
+        // 使用 LoadingManager 等待所有纹理加载完成
+        const manager = new THREE.LoadingManager();
+        manager.onLoad = function () {
+            console.log("✅ PBR纹理加载完成");
+            // 所有纹理加载完成后再启动渲染
+            requestAnimationFrame(animate);
+            document.getElementById('info').innerHTML =
+                `✅ 阈限空间瓷砖走廊<br>` +
+                `位置: (${cameraPos.x.toFixed(2)}, ${cameraPos.y.toFixed(2)}, ${cameraPos.z.toFixed(2)})<br>` +
+                `朝向: yaw=${(cameraYaw * 180/Math.PI).toFixed(1)}°, pitch=${(cameraPitch * 180/Math.PI).toFixed(1)}°<br>` +
+                `帧率: -- FPS<br>` +
+                `步进: ${uniforms.uMaxSteps.value}次<br>` +
+                `调试模式: ${uniforms.uDebugMode.value ? '开' : '关'}`;
+        };
+
+        const textureLoader = new THREE.TextureLoader(manager);
+
         console.log("📦 加载PBR纹理...");
 
         // 基础色贴图
@@ -220,8 +235,6 @@
         const displacementMap = textureLoader.load('Tiles107_2K-PNG_Displacement.png');
         displacementMap.wrapS = THREE.RepeatWrapping;
         displacementMap.wrapT = THREE.RepeatWrapping;
-
-        console.log("✅ PBR纹理加载完成");
 
         // ================== 创建着色器材质 ==================
         const ptGeometry = new THREE.PlaneGeometry(2, 2);
@@ -1266,9 +1279,9 @@
                 console.log(`最大步数: ${uniforms.uMaxSteps.value}`);
             }
         });
-        
+
         // ================== 启动动画循环 ==================
-        console.log("✅ 渲染器初始化完成");
+        console.log("✅ 渲染器初始化完成，等待纹理加载...");
         console.log("📋 使用说明:");
         console.log("  - WASD移动，鼠标拖拽视角");
         console.log("  - 空格/E上升，Shift/Q下降");
@@ -1276,8 +1289,9 @@
         console.log("  - N切换法线贴图，I调整粗糙度，K调整金属度");
         console.log("  - T调整瓷砖大小，F调整雾气强度");
         console.log("  - +/-调整光照强度");
-        
-        animate();
+        console.log("  - animate() 会在纹理加载完成后自动启动");
+
+        // 注意：animate() 现在由 LoadingManager.onLoad 回调触发
     </script>
 </body>
 </html>
