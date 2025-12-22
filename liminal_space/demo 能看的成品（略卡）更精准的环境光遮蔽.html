@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>阈限空间瓷砖走廊 - PBR渲染器</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        #info { 
+            position: absolute; 
+            top: 10px; 
+            left: 10px; 
+            color: white; 
+            font-size: 14px;
+            background: rgba(0,0,0,0.7); 
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+            line-height: 1.4;
+            pointer-events: none;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+            font-size: 12px;
+            max-width: 250px;
+        }
+        
+        #controls h3 {
+            margin-top: 0;
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.3);
+            padding-bottom: 5px;
+        }
+        
+        #controls div {
+            margin: 5px 0;
+        }
+        
+        #controls kbd {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+    <script type="module" src="./three.module.js"></script>
+</head>
+<body>
+    <div id="info">加载中...</div>
+    
+    <div id="controls">
+        <h3>控制说明</h3>
+        <div><kbd>WASD</kbd> - 移动</div>
+        <div><kbd>鼠标拖拽</kbd> - 视角</div>
+        <div><kbd>空格</kbd>/<kbd>E</kbd> - 上升</div>
+        <div><kbd>Shift</kbd>/<kbd>Q</kbd> - 下降</div>
+        <div><kbd>R</kbd> - 重置位置</div>
+        <br>
+        <h3>调试控制</h3>
+        <div><kbd>N</kbd> - 切换法线贴图</div>
+        <div><kbd>R</kbd> - 调整粗糙度</div>
+        <div><kbd>T</kbd> - 调整瓷砖大小</div>
+        <div><kbd>F</kbd> - 调整雾气强度</div>
+        <div><kbd>B</kbd> - 切换调试模式</div>
+        <div><kbd>1-3</kbd> - 切换调试视图</div>
+    </div>
+    
+    <script type="module">
+        import * as THREE from './three.module.js';
+        
+        console.log("🚀 阈限空间瓷砖走廊渲染器启动");
+        
+        // 1. 初始化Three.js核心组件
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
+        const renderer = new THREE.WebGLRenderer({ 
+            antialias: true,
+            precision: 'highp'
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+        
+        // ================== 相机控制 ==================
+        let cameraPos = new THREE.Vector3(10.0, 2.5, 2.5); // 走廊中心位置
+        let cameraYaw = 0.0; // 看向走廊内部
+        let cameraPitch = 0.0;
+        const cameraSpeed = 0.2;
+        const mouseSensitivity = 0.002;
+
+        // 键盘状态记录
+        const keys = {};
+        window.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        // 鼠标控制
+        let mouseDown = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+
+        renderer.domElement.addEventListener('mousedown', (e) => {
+            mouseDown = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+            renderer.domElement.requestPointerLock();
+        });
+
+        window.addEventListener('mouseup', () => {
+            mouseDown = false;
+            document.exitPointerLock();
+        });
+
+        renderer.domElement.addEventListener('mousemove', (e) => {
+            if (!mouseDown) return;
+            
+            const deltaX = e.movementX || e.clientX - lastMouseX;
+            const deltaY = e.movementY || e.clientY - lastMouseY;
+            
+            cameraYaw -= deltaX * mouseSensitivity;
+            cameraPitch -= deltaY * mouseSensitivity;
+            
+            // 限制俯仰角
+            cameraPitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, cameraPitch));
+            
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+        });
+
+        // 更新相机的函数
+        function updateCamera() {
+            // 根据偏航角和俯仰角计算视线方向
+            const direction = new THREE.Vector3(
+                Math.sin(cameraYaw) * Math.cos(cameraPitch),
+                Math.sin(cameraPitch),
+                -Math.cos(cameraYaw) * Math.cos(cameraPitch)
+            ).normalize();
+            
+            // 计算右侧向量（用于左右移动）
+            const right = new THREE.Vector3(
+                Math.sin(cameraYaw + Math.PI/2),
+                0,
+                -Math.cos(cameraYaw + Math.PI/2)
+            ).normalize();
+            
+            // 计算上方向量
+            const up = new THREE.Vector3(0, 1, 0);
+            
+            // 处理键盘输入
+            if (keys['w'] || keys['arrowup']) {
+                cameraPos.add(direction.clone().multiplyScalar(cameraSpeed));
+            }
+            if (keys['s'] || keys['arrowdown']) {
+                cameraPos.add(direction.clone().multiplyScalar(-cameraSpeed));
+            }
+            if (keys['a'] || keys['arrowleft']) {
+                cameraPos.add(right.clone().multiplyScalar(-cameraSpeed));
+            }
+            if (keys['d'] || keys['arrowright']) {
+                cameraPos.add(right.clone().multiplyScalar(cameraSpeed));
+            }
+            if (keys[' '] || keys['e']) {
+                cameraPos.add(up.clone().multiplyScalar(cameraSpeed));
+            }
+            if (keys['shift'] || keys['q']) {
+                cameraPos.add(up.clone().multiplyScalar(-cameraSpeed));
+            }
+            
+            // 重置相机位置（R键）
+            if (keys['r']) {
+                cameraPos.set(10.0, 2.5, 2.5);
+                cameraYaw = 0.0;
+                cameraPitch = 0.0;
+            }
+        }
+
+        // ================== 加载PBR纹理 ==================
+        const textureLoader = new THREE.TextureLoader();
+        
+        console.log("📦 加载PBR纹理...");
+
+        // 基础色贴图
+        const albedoMap = textureLoader.load('Tiles107_2K-PNG_Color.png');
+        albedoMap.wrapS = THREE.RepeatWrapping;
+        albedoMap.wrapT = THREE.RepeatWrapping;
+        albedoMap.colorSpace = THREE.SRGBColorSpace;
+
+        // 法线贴图
+        const normalMap = textureLoader.load('Tiles107_2K-PNG_NormalGL.png');
+        normalMap.wrapS = THREE.RepeatWrapping;
+        normalMap.wrapT = THREE.RepeatWrapping;
+
+        // 粗糙度贴图
+        const roughnessMap = textureLoader.load('Tiles107_2K-PNG_Roughness.png');
+        roughnessMap.wrapS = THREE.RepeatWrapping;
+        roughnessMap.wrapT = THREE.RepeatWrapping;
+
+        // 环境光遮蔽贴图
+        const aoMap = textureLoader.load('Tiles107_2K-PNG_AmbientOcclusion.png');
+        aoMap.wrapS = THREE.RepeatWrapping;
+        aoMap.wrapT = THREE.RepeatWrapping;
+
+        // 位移贴图（可选）
+        const displacementMap = textureLoader.load('Tiles107_2K-PNG_Displacement.png');
+        displacementMap.wrapS = THREE.RepeatWrapping;
+        displacementMap.wrapT = THREE.RepeatWrapping;
+
+        console.log("✅ PBR纹理加载完成");
+
+        // ================== 创建着色器材质 ==================
+        const ptGeometry = new THREE.PlaneGeometry(2, 2);
+        
+        // 着色器uniforms
+        const uniforms = {
+            time: { value: 1.0 },
+            resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+            uCameraPos: { value: new THREE.Vector3(10.0, 2.5, 2.5) },
+            uCameraDir: { value: new THREE.Vector3(0.0, 0.0, -1.0) },
+            
+            // PBR纹理
+            uAlbedoMap: { value: albedoMap },
+            uNormalMap: { value: normalMap },
+            uRoughnessMap: { value: roughnessMap },
+            uAOMap: { value: aoMap },
+            uDisplacementMap: { value: displacementMap },
+            
+            // 场景控制
+            uTileSize: { value: 0.6 },
+            uCameraOffset: { value: 0.1 },
+            
+            // 光线步进控制
+            uMinStep: { value: 0.0005 },
+            uMaxStep: { value: 0.5 },
+            uMaxSteps: { value: 512 },
+            
+            // PBR控制
+            uNormalStrength: { value: 1.0 },
+            uRoughnessFactor: { value: 1.0 },
+            uMetallicFactor: { value: 0.0 },
+            uLightIntensity: { value: 1.0 },
+            
+            // 雾气控制
+            uFogDensity: { value: 0.0 },
+            
+            // 调试
+            uDebugMode: { value: false },
+            uDebugType: { value: 0 },
+
+            // 后处理效果
+            uBlurStrength: { value: 1.2 } // 模糊强度 0.0-1.0
+        };
+
+        // 创建着色器材质
+        const ptMaterial = new THREE.ShaderMaterial({
+            uniforms: uniforms,
+            
+            defines: {
+                USE_NORMAL_MAP: 1,
+                
+            },
+            
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    // 顶点输出四维是GPU屏幕坐标变换需求
+                    // 这里是直接把那个平面作为底片贴我们屏幕上，归一化坐标是【-1，1】
+                    // uv是用于插值计算每个像素在平面上的坐标，不是拿去贴纹理
+                    // 顶点启动四次，输出的玩意会插值，相当于每次片元启动计算像素时，都能获得像素对应的坐标
+                    gl_Position = vec4(position, 1.0);
+                }
+            `,
+            
+            fragmentShader: `
+                uniform float time;
+                uniform vec2 resolution;
+                uniform vec3 uCameraPos;
+                uniform vec3 uCameraDir;
+
+                // PBR贴图
+                uniform sampler2D uAlbedoMap;
+                uniform sampler2D uNormalMap;
+                uniform sampler2D uRoughnessMap;
+                uniform sampler2D uAOMap;
+
+                // 控制参数
+                uniform float uTileSize;
+                uniform float uCameraOffset;
+                uniform float uMinStep;
+                uniform float uMaxStep;
+                uniform int uMaxSteps;
+                
+                // PBR控制
+                uniform float uNormalStrength;
+                uniform float uRoughnessFactor;
+                uniform float uMetallicFactor;
+                uniform float uLightIntensity;
+                
+                // 雾气控制
+                uniform float uFogDensity;
+                
+                // 调试
+                uniform bool uDebugMode;
+                uniform int uDebugType;
+                uniform float uBlurStrength;
+
+                varying vec2 vUv;
+
+                // ========== 常量定义 ==========
+                const float PI = 3.14159265359;
+
+                // ========== SDF核心函数 ==========
+
+                // 点到线段距离（2D）
+                float distanceToSegment(vec2 p, vec2 a, vec2 b) {
+                    vec2 ap = p - a;
+                    vec2 ab = b - a;
+                    float t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+                    vec2 closest = a + ab * t;
+                    return length(p - closest);
+                }
+
+                // 墙体SDF
+                float sdWall(vec3 p, vec2 a, vec2 b, float height, float thickness) {
+                    // 计算到墙体的2D距离
+                    float d2 = distanceToSegment(p.xz, a, b);
+                    
+                    // 墙体厚度
+                    float wallDist = d2 - thickness;
+                    
+                    // 墙体高度限制
+                    float verticalDist = max(p.y - height, -p.y);
+                    
+                    // 如果在高度范围内，只考虑水平距离
+                    if(p.y >= 0.0 && p.y <= height) {
+                        return max(wallDist, 0.0);
+                    } else {
+                        // 在高度范围外，计算到边缘的距离
+                        return length(vec2(max(wallDist, 0.0), max(verticalDist, 0.0)));
+                    }
+                }
+
+                // 地板SDF
+                float sdFloor(vec3 p) {
+                    return p.y;
+                }
+
+                // 天花板SDF
+                float sdCeiling(vec3 p, float height) {
+                    return height - p.y;
+                }
+
+                // 完整场景SDF - 回廊结构
+                float sceneSDF(vec3 p) {
+                    float wallHeight = 5.0;
+                    float thickness = 0.2;
+                    
+                    float dist = 1e10;
+                    
+                    // 外墙 - 形成L型回廊
+                    dist = min(dist, sdWall(p, vec2(0.0, 0.0), vec2(20.0, 0.0), wallHeight, thickness));
+                    dist = min(dist, sdWall(p, vec2(20.0, 0.0), vec2(20.0, 15.0), wallHeight, thickness));
+                    dist = min(dist, sdWall(p, vec2(20.0, 15.0), vec2(0.0, 15.0), wallHeight, thickness));
+                    dist = min(dist, sdWall(p, vec2(0.0, 15.0), vec2(0.0, 0.0), wallHeight, thickness));
+                    
+                    // 中间隔断墙
+                    dist = min(dist, sdWall(p, vec2(5.0, 0.0), vec2(5.0, 10.0), wallHeight, thickness * 1.5));
+                    
+                    // 地板和天花板
+                    dist = min(dist, sdFloor(p));
+                    dist = min(dist, sdCeiling(p, wallHeight));
+                    
+                    return dist;
+                }
+
+                // ========== 安全的光线步进 ==========
+                // ro是相机针孔坐标，rd是射线向量
+                // 这边要么是迈步过了被剔除，要么就是步长不够够不着被剔除（尤其二分精修时）
+                float safeRaymarch(vec3 ro, vec3 rd) {
+                    float depth = 0.001;
+                    float lastDist = sceneSDF(ro);
+
+                    for(int i = 0; i < uMaxSteps; i++) {
+                    // 沿射线迈步取点，找到点在面上的（SDF首次趋近于0）
+                        vec3 p = ro + depth * rd;
+                        float dist = sceneSDF(p);
+
+                        
+                        // 精修意义不大，一般误差在0.005左右就没问题了
+                        // 这里低了有可能出现空缺，高了会扭曲
+                        // 圆环是刚好在正对的时候会出现非常圆，所以有理由怀疑是刚好迈步迈过了被剔除了
+                        // 给墙再增加厚度，和增加穿越检定还是有必要的
+                        if(abs(dist) < 0.005)
+                        {
+                            return depth;
+                        }
+
+                        // 检测表面穿越
+                        if(lastDist * dist < 0.0) {
+                            // 高精度二分查找 - 使用预估的步长
+                            float estimatedStepSize = 0.1;
+                            float t0 = max(depth - estimatedStepSize, 0.0);
+                            float t1 = depth;
+
+                            for(int j = 0; j < 8; j++) {
+                                float tMid = (t0 + t1) * 0.5;
+                                if(sceneSDF(ro + tMid * rd) < 0.0) {
+                                    t1 = tMid;
+                                } else {
+                                    t0 = tMid;
+                                }
+                            }
+                            return (t0 + t1) * 0.5;
+                        }
+
+                        // 保守的自适应步长 - 避免过度跳跃
+                        float stepSize;
+
+                        // 有点类似预热和退火
+                        if(dist < 0.5) {
+                            stepSize = max(dist * 0.7, uMinStep);
+                        } else if(dist < 5.0) {
+                            stepSize = clamp(dist * 0.4, uMinStep, 0.8);
+                        } else {
+                            stepSize = clamp(dist * 0.15, uMinStep * 2.0, uMaxStep * 0.5);
+                        }
+
+                        // 更严格的步长限制
+                        stepSize = min(stepSize, dist * 1.2);
+                        stepSize = max(stepSize, uMinStep);
+
+                        lastDist = dist;
+                        depth += stepSize;
+                        // 距离大于100时视作背景，剔除。bug一般跟这个无关
+                        if(depth > 100.0) break;
+                    }
+
+                    return -1.0;
+                }
+
+
+                // ========== 法线计算 ==========
+                vec3 calcNormal(vec3 p) {
+                    // 动态epsilon - 基于距离调整精度
+                    float baseEps = 0.001;
+                    float distFactor = min(1.0, length(p) * 0.001);
+                    float eps = baseEps * (1.0 + distFactor);
+
+
+                    // 说是SDF梯度的经典算法就是这样，是个近似值，那无所谓了
+                    vec3 n;
+                    n.x = sceneSDF(p + vec3(eps, 0, 0)) - sceneSDF(p - vec3(eps, 0, 0));
+                    n.y = sceneSDF(p + vec3(0, eps, 0)) - sceneSDF(p - vec3(0, eps, 0));
+                    n.z = sceneSDF(p + vec3(0, 0, eps)) - sceneSDF(p - vec3(0, 0, eps));
+
+                    float len = length(n);
+
+                    // 这个是防止太小了出现精度错误变成0，所以会在这种情况下默认返回向上的法线
+                    /*if(len < 0.0001) {
+                        return vec3(0.0, 1.0, 0.0);
+                    }*/
+
+                    return normalize(n);
+                }
+
+                // ========== PBR辅助函数 ==========
+                // 这四个组合计算BRDF
+
+                // 微法线分布，用到了粗糙度，也就是说粗糙度现在可以控制高光，说是半球内积分为1
+                float DistributionGGX(vec3 N, vec3 H, float roughness) {
+                    float a = roughness * roughness;
+                    float a2 = a * a;
+                    float NdotH = max(dot(N, H), 0.0);
+                    float NdotH2 = NdotH * NdotH;
+                    
+                    float num = a2;
+                    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+                    denom = PI * denom * denom;
+                    
+                    return num / denom;
+                }
+
+                // 描述自阴影，粗糙越大微表面被其他微表面遮住越多
+                float GeometrySchlickGGX(float NdotV, float roughness) {
+                    float r = (roughness + 1.0);
+                    float k = (r * r) / 8.0;
+                    
+                    float num = NdotV;
+                    float denom = NdotV * (1.0 - k) + k;
+                    
+                    return num / denom;
+                }
+
+                // 入射和出射的几何遮蔽
+                float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+                    float NdotV = max(dot(N, V), 0.0);
+                    float NdotL = max(dot(N, L), 0.0);
+                    float ggx1 = GeometrySchlickGGX(NdotV, roughness);
+                    float ggx2 = GeometrySchlickGGX(NdotL, roughness);
+                    
+                    return ggx1 * ggx2;
+                }
+
+                // 菲涅尔效应，掠射角更亮（拿去做描边的那个，f0是反射率），说是这部分保持了能量守恒，反射加折射为一
+                vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+                    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+                }
+
+                // ========== 纹理坐标生成 ==========
+                vec2 getTileUV(vec3 p, vec3 normal) {
+                    vec2 uv;
+
+                    // 高精度纹理坐标生成 - 确保远距离精度 
+                    // 强制使用高精度，避免编译器给改成低精度导致贴图对不齐
+                    vec3 p_high = p + vec3(0.0);
+
+                    if(abs(normal.y) > 0.8) {
+                        // 地板/天花板 - 使用双倍精度
+                        uv = p_high.xz * uTileSize;// 可以用窗口来看，相当于贴图边长乘倍数，然后抹掉小数点就是往回平移
+                        uv = fract(uv + vec2(0.1, 0.1)); // 添加偏移避免对齐
+                    } else {
+                        // 墙面 - 根据主方向选择最佳投影
+                        float nx = abs(normal.x);
+                        float ny = abs(normal.y);
+                        float nz = abs(normal.z);
+
+                        if(nx > ny && nx > nz) {
+                            // X方向墙面 - 投影到YZ平面
+                            uv = p_high.yz * uTileSize;
+                        } else if(nz > ny) {
+                            // Z方向墙面 - 投影到XY平面
+                            uv = p_high.xy * uTileSize;
+                        } else {
+                            // 特殊情况，回退到XY平面
+                            uv = p_high.xy * uTileSize;
+                        }
+                        uv = fract(uv);
+                    }
+                   
+
+                    return uv;
+                }
+
+                // 光照部分
+                    /*1. 输入准备
+                        ↓
+                        2. 直接光照计算（点光源/方向光）
+                        ↓
+                        3. 间接光照计算（全局光照）
+                        ↓
+                        4. 环境光遮蔽（AO）
+                        ↓
+                        5. 后处理效果
+                    */
+                // 反射加折射 <= 入射
+
+
+                // ========== 环境光照计算 ==========
+
+                // 环境光遮蔽，用来模拟附近物体的遮光。采样法线来计算半球内的表面（SDF=0），以此削减ao
+                // 改进的环境遮蔽计算 - 考虑直接光照影响
+                /*float calculateAmbientOcclusion(vec3 p, vec3 normal) {
+                    float ao = 1.0;
+                    int samples = 6; // 减少采样数
+                    float radius = 1.5; // 减小采样半径
+
+                    // 简化的AO计算
+                    for(int i = 0; i < samples; i++) {
+                        float angle = float(i) / float(samples) * 2.0 * PI;
+                        vec3 sampleDir = normalize(normal +
+                            vec3(cos(angle), sin(angle) * 0.3, sin(angle)) * 0.2);
+
+                        float sampleDist = sceneSDF(p + sampleDir * radius);
+                        ao -= max(0.0, (1.0 - sampleDist / radius)) * 0.05; // 减弱AO强度
+                    }
+
+                    return clamp(ao, 0.4, 1.0); // 平衡的AO范围
+                }*/
+
+                float calculateAmbientOcclusion(vec3 p, vec3 normal) {
+                    float ao = 1.0;
+                    int samples = 6;
+                    float radius = 1.5;
+                    float bias = 0.01; // 避免自相交
+                    
+                    // 构建切线空间的基础向量
+                    vec3 tangent, bitangent;
+                    if(abs(normal.x) > 0.8) {
+                        tangent = vec3(0.0, 0.0, 1.0);
+                    } else {
+                        tangent = vec3(1.0, 0.0, 0.0);
+                    }
+                    tangent = normalize(cross(normal, tangent));
+                    bitangent = cross(normal, tangent);
+                    
+                    for(int i = 0; i < samples; i++) {
+                        // 使用更合理的随机方向生成
+                        float angle = float(i) / float(samples) * 2.0 * PI;
+                        
+                        // 余弦加权半球采样
+                        float u = float(i) / float(samples);
+                        float r = sqrt(u);
+                        float theta = 2.0 * PI * u;
+                        
+                        vec3 localSample = vec3(
+                            r * cos(theta),
+                            r * sin(theta),
+                            sqrt(1.0 - u) // 余弦加权
+                        );
+                        
+                        // 转换到世界空间
+                        vec3 sampleDir = normalize(
+                            tangent * localSample.x +
+                            bitangent * localSample.y +
+                            normal * localSample.z
+                        );
+                        
+                        // 采样点位置（避免自相交）
+                        vec3 samplePos = p + normal * bias + sampleDir * radius;
+                        float sampleDist = sceneSDF(samplePos);
+                        
+                        
+                        // 部分遮挡，基于距离
+                        float visibility = smoothstep(0.0, 1.0, sampleDist / radius);
+                        ao -= (1.0 - visibility) * 0.7 / float(samples);
+                        
+                    }
+                    
+                    return clamp(ao, 0.3, 1.0);
+                }
+
+                // ========== 只计算直接光照（避免递归调用） ==========
+                vec3 calculateDirectLightingOnly(vec3 p, vec3 viewDir, vec3 normal, vec2 uv, vec3 lightPos, vec3 lightColor) {
+
+
+                    // 采样纹理
+                    vec3 albedo = texture2D(uAlbedoMap, uv).rgb;
+                    vec3 texNormal = texture2D(uNormalMap, uv).xyz * 2.0 - 1.0;
+                    float roughness = texture2D(uRoughnessMap, uv).r * uRoughnessFactor;
+
+                    // 没有金属度贴图，毕竟不是金属。但是金属度微调一点还挺好看
+                    float metallic = uMetallicFactor;
+
+
+                    // 处理法线贴图
+                    #ifdef USE_NORMAL_MAP
+                        vec3 worldNormal = normalize(normal);
+                        vec3 tangentNormal = normalize(texNormal);
+
+                        vec3 tangent = vec3(1.0, 0.0, 0.0);
+                        if(abs(worldNormal.x) > 0.8) {
+                            tangent = vec3(0.0, 0.0, 1.0);
+                        }
+                        vec3 bitangent = normalize(cross(worldNormal, tangent));
+                        tangent = normalize(cross(bitangent, worldNormal));
+
+                        mat3 tbn = mat3(tangent, bitangent, worldNormal);
+                        vec3 finalNormal = normalize(tbn * tangentNormal);
+                        finalNormal = normalize(mix(worldNormal, finalNormal, uNormalStrength));
+                    #else
+                        vec3 finalNormal = normalize(normal);
+                    #endif
+                    
+                    vec3 Lo = vec3(0.0);
+
+                    // 计算直接光照
+                    vec3 lightDir = normalize(lightPos - p);
+                    float distance = length(lightPos - p);
+
+                    float NdotL = max(dot(finalNormal, lightDir), 0.0);
+
+                        if(NdotL > 0.01) {
+                            // 阴影检测
+                            float bias = 0.02 + (1.0 - NdotL) * 0.02;
+                            float shadowDist = safeRaymarch(p + finalNormal * bias, lightDir);
+
+                            float shadow = 1.0;
+                            if(shadowDist > 0.0 && shadowDist < distance * 0.99) {
+                                shadow = 0.0;
+                            }
+
+                            // 光照衰减
+                            float attenuation = 1.0 / (distance * distance);
+                            attenuation = pow(attenuation, 0.9);
+                            vec3 radiance = lightColor * attenuation * shadow;
+
+                            // Cook-Torrance BRDF
+                            vec3 halfwayDir = normalize(lightDir + viewDir);
+                            vec3 F0 = mix(vec3(0.04), albedo, metallic);
+                            vec3 F = fresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), F0);
+
+                            float NDF = DistributionGGX(finalNormal, halfwayDir, roughness);
+                            float G = GeometrySmith(finalNormal, viewDir, lightDir, roughness);
+
+                            vec3 numerator = NDF * G * F;
+                            float denominator = 4.0 * max(dot(finalNormal, viewDir), 0.0) * NdotL + 0.0001;
+                            vec3 specular = numerator / denominator;
+
+                            vec3 kS = F;
+                            vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+
+                            vec3 diffuse = kD * albedo / PI;
+
+                            Lo += (diffuse + specular) * radiance * NdotL;
+                    }
+
+                    return Lo;
+                }
+
+                // 多级间接光照计算 - 展开递归为循环（GLSL不支持递归）
+                vec3 calculateIndirectLighting(vec3 p, vec3 normal, vec3 viewDir, float roughness, vec3 albedo, float metallic , vec3 lightPos , vec3 lightColor) {
+                    vec3 indirectLight = vec3(0.0);
+
+                    // 固定最大反弹次数 - 展开递归
+                    // 这个库不支持递归啊
+                    //const int MAX_BOUNCES = 3;
+
+                    // 第0级：从当前点开始的采样
+                    const int SAMPLE_COUNT = 3; // 减少采样数提高性能
+                    vec3 totalRadiance = vec3(0.0);
+                    float totalWeight = 0.0;
+
+                    for(int i = 0; i < SAMPLE_COUNT; i++) {
+                        // 在半球内生成均匀随机方向
+                        float u1 = (float(i) + 0.5) / float(SAMPLE_COUNT);
+                        float u2 = fract(u1 * 2.0 * PI);
+
+                        // 使用余弦加权采样 - 重要性采样
+                        float theta = acos(sqrt(u1));
+                        float phi = u2 * 2.0 * PI;
+
+                        // 构建切线空间的采样方向
+                        vec3 sampleDir;
+                        sampleDir.x = sin(theta) * cos(phi);
+                        sampleDir.y = cos(theta);
+                        sampleDir.z = sin(theta) * sin(phi);
+
+                        // 转换到世界空间
+                        vec3 tangent, bitangent;
+                        if(abs(normal.x) < 0.9) {
+                            tangent = normalize(cross(normal, vec3(1.0, 0.0, 0.0)));
+                        } else {
+                            tangent = normalize(cross(normal, vec3(0.0, 1.0, 0.0)));
+                        }
+                        bitangent = normalize(cross(normal, tangent));
+
+                        vec3 worldSampleDir = normalize(
+                            sampleDir.x * tangent +
+                            sampleDir.y * normal +
+                            sampleDir.z * bitangent
+                        );
+
+                        // 投射间接光线
+                        float hitDistance = safeRaymarch(p + normal * 0.02, worldSampleDir);
+
+                        if(hitDistance > 0.0) {
+                            vec3 hitPoint = p + normal * 0.02 + worldSampleDir * hitDistance;
+                            vec3 hitNormal = calcNormal(hitPoint);
+                            vec2 hitUV = getTileUV(hitPoint, hitNormal);
+                            vec3 hitViewDir = normalize(-worldSampleDir);
+
+                            // 计算击中点的直接光照
+                            //vec3 lightPos = vec3(10.0, 4.0, 7.5);
+                            //vec3 lightColor = vec3(1.0, 0.85, 0.6) * 2.0 * uLightIntensity;
+                            vec3 hitColor = calculateDirectLightingOnly(hitPoint, hitViewDir, hitNormal, hitUV, lightPos, lightColor);
+
+                            // 第1级反射：从击中点继续采样（模拟一次递归）
+                            vec3 secondBounceLight = vec3(0.0);
+                            if(hitDistance < 15.0) { // 距离限制
+                                // 简化的二次反弹 - 只采样1个方向
+                                vec3 secondSampleDir = normalize(reflect(worldSampleDir, hitNormal));
+                                secondSampleDir.y = max(secondSampleDir.y, 0.1); // 避免向下
+
+                                float secondHitDistance = safeRaymarch(hitPoint + hitNormal * 0.02, secondSampleDir);
+
+                                if(secondHitDistance > 0.1 && secondHitDistance < 10.0) {
+                                    vec3 secondHitPoint = hitPoint + hitNormal * 0.02 + secondSampleDir * secondHitDistance;
+                                    vec3 secondHitNormal = calcNormal(secondHitPoint);
+                                    vec2 secondHitUV = getTileUV(secondHitPoint, secondHitNormal);
+                                    vec3 secondHitViewDir = normalize(-secondSampleDir);
+
+                                    // 计算第二级击中点的直接光照
+                                    vec3 secondHitColor = calculateDirectLightingOnly(secondHitPoint, secondHitViewDir, secondHitNormal, secondHitUV, lightPos, lightColor);
+
+                                    // 第二级反射衰减更强
+                                    float firstBounceAtt = 1.0 / (1.0 + hitDistance * 0.15);
+                                    float secondBounceAtt = 1.0 / (1.0 + secondHitDistance * 0.25);
+
+                                    secondBounceLight = secondHitColor * firstBounceAtt * secondBounceAtt * 0.3;
+                                }
+                            }
+
+                            hitColor += secondBounceLight;
+
+                            // 计算BRDF权重
+                            float cosTheta = max(dot(normal, worldSampleDir), 0.0);
+                            float hitCosTheta = max(dot(hitNormal, -worldSampleDir), 0.0);
+
+                            // Cook-Torrance BRDF简化版本
+                            vec3 halfwayDir = normalize(viewDir + worldSampleDir);
+                            vec3 F0 = mix(vec3(0.04), albedo, metallic);
+                            vec3 F = F0 + (1.0 - F0) * pow(1.0 - max(dot(halfwayDir, viewDir), 0.0), 5.0);
+
+                            float NDF = DistributionGGX(normal, halfwayDir, roughness);
+                            float G = GeometrySmith(normal, viewDir, worldSampleDir, roughness);
+
+                            vec3 numerator = NDF * G * F;
+                            float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * cosTheta + 0.0001;
+                            vec3 specular = numerator / denominator;
+
+                            vec3 kS = F;
+                            vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+                            vec3 diffuse = kD * albedo / PI;
+
+                            vec3 brdf = diffuse + specular;
+
+                            // PDF权重 (余弦加权采样的PDF = cosTheta / PI)
+                            float pdf = cosTheta / PI;
+                            float weight = cosTheta / pdf; // 蒙特卡洛权重
+
+                            // 距离衰减
+                            float distanceAtt = 1.0 / (1.0 + hitDistance * 0.1);
+
+                            // 累加辐射度
+                            totalRadiance += hitColor * brdf * cosTheta * distanceAtt * weight;
+                            totalWeight += weight;
+                        }
+                    }
+
+                    // 蒙特卡洛积分 - 计算期望值
+                    if(totalWeight > 0.0) {
+                        indirectLight = totalRadiance / float(SAMPLE_COUNT);
+
+                        // 整体强度控制
+                        indirectLight *= 0.4; // 控制间接光照强度
+                    }
+
+                    return indirectLight;
+                }
+
+                // ========== 完整的PBR光照 ==========
+                vec3 fullPBRLighting(vec3 p, vec3 viewDir, vec3 normal, vec2 uv) {
+                    // 采样纹理
+                    vec3 albedo = texture2D(uAlbedoMap, uv).rgb;
+                    vec3 texNormal = texture2D(uNormalMap, uv).xyz * 2.0 - 1.0;
+                    float roughness = texture2D(uRoughnessMap, uv).r * uRoughnessFactor;
+                    float metallic = uMetallicFactor;
+                    float ao = texture2D(uAOMap, uv).r;
+
+                    // 加强法线贴图影响
+                    #ifdef USE_NORMAL_MAP
+                        vec3 worldNormal = normalize(normal);
+                        vec3 tangentNormal = normalize(texNormal);
+
+                        // 构建TBN矩阵
+                        vec3 tangent = vec3(1.0, 0.0, 0.0);
+                        if(abs(worldNormal.x) > 0.8) {
+                            tangent = vec3(0.0, 0.0, 1.0);
+                        }
+                        vec3 bitangent = normalize(cross(worldNormal, tangent));
+                        tangent = normalize(cross(bitangent, worldNormal));
+
+                        mat3 tbn = mat3(tangent, bitangent, worldNormal);
+                        vec3 finalNormal = normalize(tbn * tangentNormal);
+                        finalNormal = normalize(mix(worldNormal, finalNormal, uNormalStrength));
+                    #else
+                        vec3 finalNormal = normalize(normal);
+                    #endif
+
+                    // 瓷砖边缘检测 - 改进版本，基于距离自适应
+                    vec2 tileUV = uv * 4.0;
+                    vec2 tilePos = fract(tileUV);
+                    float tileEdge = smoothstep(0.45, 0.55, abs(tilePos.x - 0.5)) +
+                                     smoothstep(0.45, 0.55, abs(tilePos.y - 0.5));
+
+                    // 光源定义 - 只使用一个光源，避免未初始化问题
+                    vec3 lightPositions[1];
+                    lightPositions[0] = vec3(10.0, 4.0, 7.5);  // 主光源
+
+                    // 出口那种绿色 0.2 0.7 0.3
+                    vec3 lightColors[1] = vec3[1](
+                        vec3(1.0, 0.8, 0.3) * 2.0 * uLightIntensity   // 暖黄色
+                    );
+
+                    vec3 Lo = vec3(0.0);
+                    vec3 indirectLight = vec3(0.0);
+
+                    // 计算每个光源的贡献
+                    for(int i = 0; i < 1; i++) {
+                        vec3 lightDir = normalize(lightPositions[i] - p);
+                        float distance = length(lightPositions[i] - p);
+
+                        // 改进的阴影检测 - 专门处理隔断墙问题
+                        float shadow = 1.0;
+
+                        // 计算表面与光源的角度
+                        float NdotL = max(dot(finalNormal, lightDir), 0.0);
+
+    
+                        // 背面不接收直接光照 - 使用标准物理方法
+                        if(NdotL <= 0.01) {
+                            shadow = 0.0; // 背面完全在阴影中
+                        } else {
+                            // 通用阴影检测 - 适用于所有表面
+                            if(i == 0 || lightColors[i].r > 0.1) { // 对主要光源进行阴影检测
+                                float viewDist = length(p - uCameraPos);
+                                // 移除距离限制 - 所有地方都应该检测阴影
+                                // 通用阴影偏移 - 基于表面角度自动调整
+                                float bias = 0.02 + (1.0 - NdotL) * 0.02;
+
+                                float shadowDist = safeRaymarch(p + finalNormal * bias, lightDir);
+
+                                // 标准阴影检测
+                                if(shadowDist > 0.0 && shadowDist < distance * 0.99) {
+                                    shadow = 0.0; // 完全阴影
+                                } else {
+                                    shadow = 1.0; // 完全光照
+                                }
+                            }
+                        }
+
+                        // 物理正确的光照衰减 - 移除最小光照强度
+                        float attenuation = 1.0 / (distance * distance);
+
+                        // 轻微的距离衰减控制 - 保持真实感
+                        attenuation = pow(attenuation, 0.9);
+
+                        vec3 radiance = lightColors[i] * attenuation * shadow;
+
+                        // Cook-Torrance BRDF
+                        vec3 halfwayDir = normalize(lightDir + viewDir);
+
+                        // 法线分布函数
+                        float NDF = DistributionGGX(finalNormal, halfwayDir, roughness);
+
+                        // 几何函数
+                        float G = GeometrySmith(finalNormal, viewDir, lightDir, roughness);
+
+                        // 菲涅尔方程
+                        vec3 F0 = mix(vec3(0.04), albedo, metallic);
+                        vec3 F = fresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), F0);
+
+                        // 镜面反射部分
+                        vec3 numerator = NDF * G * F;
+                        float denominator = 4.0 * max(dot(finalNormal, viewDir), 0.0) * max(dot(finalNormal, lightDir), 0.0) + 0.0001;
+                        vec3 specular = numerator / denominator;
+
+                        // 漫反射部分
+                        vec3 kS = F;
+                        vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+
+                        // NdotL已经在前面计算了
+                        vec3 diffuse = kD * albedo / PI;
+
+                        // 累加光照贡献 - 使用之前计算的NdotL
+                        Lo += (diffuse + specular) * radiance * NdotL;
+
+                        // 真正的间接光照 - 多级反射光线追踪
+                        indirectLight += calculateIndirectLighting(p, finalNormal, viewDir, roughness, albedo, metallic, lightPositions[i],lightColors[i]);
+                    }
+
+                    // 基于SDF的环境光照计算 - 模拟递归光线追踪
+                    float ao_value = calculateAmbientOcclusion(p, finalNormal);
+
+                    // 减少环境光强度，突出间接光照效果
+                    float final_ao = ao_value;
+                    vec3 ambient = final_ao * albedo * 0.02;  // 几乎关闭环境光
+
+                    
+
+                    // 组合所有光照 - 包含真正的间接光照
+                    vec3 color = ambient + indirectLight + Lo;
+
+                    // 改进的瓷砖效果处理 - 考虑光照强度
+                    float totalLightIntensity = length(Lo);
+                    float lightFactor = min(totalLightIntensity / 2.0, 1.0); // 归一化光照强度
+
+                    if(tileEdge > 0.5) {
+                        // 瓷砖接缝 - 在强光下减弱变暗效果
+                        float darknessFactor = mix(0.85, 0.95, lightFactor); // 强光时只稍微变暗
+                        color *= darknessFactor;
+                        roughness = min(roughness + 0.15, 1.0);
+                    } else {
+                        // 瓷砖表面有轻微镜面效果 - 大幅减少
+                        color += vec3(0.005) * (1.0 - roughness) * lightFactor;
+                    }
+
+                    return color;
+                }
+
+                // ========== 调试可视化 ==========
+                vec3 debugVisualization(vec3 ro, vec3 rd, float t) {
+                    if(uDebugType == 1) {
+                        // 距离场可视化
+                        if(t > 0.0) {
+                            vec3 p = ro + t * rd;
+                            float dist = sceneSDF(p);
+                            return vec3(dist * 0.5);
+                        } else {
+                            vec3 p = ro + rd * 50.0;
+                            float dist = sceneSDF(p);
+                            return vec3(dist * 0.1);
+                        }
+                    } else if(uDebugType == 2) {
+                        // 步数/深度可视化
+                        return vec3(t * 0.02);
+                    } else if(uDebugType == 3) {
+                        // 法线可视化
+                        if(t > 0.0) {
+                            vec3 p = ro + t * rd;
+                            vec3 normal = calcNormal(p);
+                            return normal * 0.5 + 0.5;
+                        } else {
+                            return vec3(0.0);
+                        }
+                    }
+                    
+                    return vec3(0.0);
+                }
+
+                // ========== 主函数 ==========
+                void main() {
+                    vec2 uv = (vUv - 0.5) * 2.0;
+                    uv.x *= resolution.x / resolution.y;
+                    
+                    vec3 ro = uCameraPos;
+                    vec3 rd = uCameraDir;
+                    
+                    // 构建相机坐标系
+                    vec3 worldUp = vec3(0.0, 1.0, 0.0);
+                    vec3 cameraRight = normalize(cross(rd, worldUp));
+                    vec3 cameraUp = normalize(cross(cameraRight, rd));
+                    
+                    // 计算射线方向
+                    rd = normalize(rd + uv.x * cameraRight + uv.y * cameraUp);
+                    
+                    // 进行光线步进
+                    float t = safeRaymarch(ro, rd);
+                    
+                    // 调试模式
+                    if(uDebugMode) {
+                        vec3 color = debugVisualization(ro, rd, t);
+                        gl_FragColor = vec4(color, 1.0);
+                        return;
+                    }
+                    
+                    // 正常渲染
+                    vec3 color;
+                    if(t > 0.0) {
+                        // 击中表面
+                        vec3 p = ro + t * rd;
+                        vec3 normal = calcNormal(p);
+                        vec2 texUV = getTileUV(p, normal);
+                        vec3 viewDir = normalize(uCameraPos - p);
+                        
+                        // 计算PBR光照
+                        color = fullPBRLighting(p, viewDir, normal, texUV);
+                        
+                        // 简化的雾气效果
+                        float fog = exp(-t * uFogDensity);
+                        fog = clamp(fog, 0.3, 1.0); // 确保近距离不会完全透明
+                        vec3 fogColor = vec3(0.28, 0.64, 0.62);
+                        color = mix(fogColor, color, fog);
+                        
+                    } else {
+                        // 背景 - 阈限空间风格
+                        color = vec3(0.02, 0.03, 0.05);
+                        
+                        // 根据视角方向添加渐变
+                        float horizon = smoothstep(-0.1, 0.1, rd.y);
+                        color = mix(color, vec3(0.06, 0.09, 0.12), horizon);
+                        
+                        // 走廊尽头的微弱光晕
+                        float glowIntensity = 0.5 + 0.5 * sin(time * 1.5);
+                        float glow = smoothstep(0.0, 0.4, rd.z) * glowIntensity;
+                        color += vec3(0.12, 0.10, 0.08) * glow * 0.15;
+                    }
+                    
+                    // 色调映射和伽马校正
+                    color = color / (color + vec3(1.0));
+                    color = pow(color, vec3(1.0/2.2));
+
+                    // 轻量级颜色模糊效果
+                    if(uBlurStrength > 0.0) {
+                        // 简单的邻域颜色混合 - 基于屏幕坐标
+                        vec2 texel = 1.0 / vec2(800.0, 600.0);
+
+                        // 使用屏幕坐标生成随机但可重复的颜色偏移
+                        vec2 screenCoord = gl_FragCoord.xy;
+                        float noise1 = fract(sin(dot(screenCoord, vec2(12.9898, 78.233))) * 43758.5453);
+                        float noise2 = fract(sin(dot(screenCoord, vec2(78.233, 12.9898))) * 43758.5453);
+
+                        // 创建简单的颜色偏移
+                        vec3 colorShift = vec3(
+                            sin(noise1 * 6.283) * 0.1,
+                            cos(noise2 * 6.283) * 0.1,
+                            sin((noise1 + noise2) * 3.1415) * 0.1
+                        );
+
+                        // 应用模糊 - 主要是降低对比度和轻微的颜色混合
+                        float blurAmount = uBlurStrength * 0.3;
+                        color = mix(color, color + colorShift, blurAmount);
+
+                        // 降低饱和度和亮度模拟模糊效果
+                        float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+                        color = mix(color, vec3(luminance), blurAmount * 0.5);
+
+                        // 轻微的亮度调节
+                        color *= (1.0 - blurAmount * 0.1);
+                    }
+
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `
+        });
+        
+        const ptPlane = new THREE.Mesh(ptGeometry, ptMaterial);
+        scene.add(ptPlane);
+        
+        // ================== 动画循环 ==================
+        const clock = new THREE.Clock();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // 更新相机位置和方向
+            updateCamera();
+            
+            // 计算相机方向向量
+            const direction = new THREE.Vector3(
+                Math.sin(cameraYaw) * Math.cos(cameraPitch),
+                Math.sin(cameraPitch),
+                -Math.cos(cameraYaw) * Math.cos(cameraPitch)
+            ).normalize();
+            
+            // 更新着色器uniforms
+            uniforms.uCameraPos.value.copy(cameraPos);
+            uniforms.uCameraDir.value.copy(direction);
+            uniforms.time.value = clock.getElapsedTime();
+            uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+            
+            // 渲染
+            renderer.render(scene, camera);
+            
+            // 更新信息显示
+            const fps = Math.round(1/clock.getDelta());
+            document.getElementById('info').innerHTML = 
+                `✅ 阈限空间瓷砖走廊<br>` +
+                `位置: (${cameraPos.x.toFixed(2)}, ${cameraPos.y.toFixed(2)}, ${cameraPos.z.toFixed(2)})<br>` +
+                `朝向: yaw=${(cameraYaw * 180/Math.PI).toFixed(1)}°, pitch=${(cameraPitch * 180/Math.PI).toFixed(1)}°<br>` +
+                `帧率: ${fps} FPS<br>` +
+                `步进: ${uniforms.uMaxSteps.value}次<br>` +
+                `调试模式: ${uniforms.uDebugMode.value ? '开' : '关'}`;
+        }
+        
+        // ================== 窗口大小调整 ==================
+        window.addEventListener('resize', function() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+        });
+        
+        // ================== 调试控制 ==================
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            
+            // 调试模式切换
+            if (key === 'b' || key === '`') {
+                uniforms.uDebugMode.value = !uniforms.uDebugMode.value;
+                console.log(`调试模式: ${uniforms.uDebugMode.value ? '开' : '关'}`);
+            }
+            
+            // 调试类型切换 (1-3)
+            if (key >= '1' && key <= '3') {
+                uniforms.uDebugType.value = parseInt(key) - 1;
+                console.log(`调试类型: ${['距离场', '深度', '法线'][uniforms.uDebugType.value]}`);
+            }
+            
+            // N: 切换法线贴图
+            if (key === 'n') {
+                if (ptMaterial.defines.USE_NORMAL_MAP) {
+                    delete ptMaterial.defines.USE_NORMAL_MAP;
+                } else {
+                    ptMaterial.defines.USE_NORMAL_MAP = 1;
+                }
+                ptMaterial.needsUpdate = true;
+                console.log(`法线贴图: ${ptMaterial.defines.USE_NORMAL_MAP ? '开启' : '关闭'}`);
+            }
+            
+            // k: 调整金属度因子
+            if (key === 'k') {
+                uniforms.uMetallicFactor.value = uniforms.uMetallicFactor.value > 2.0 ? 0.0 : uniforms.uMetallicFactor.value + 0.2;
+                console.log(`金属度因子: ${uniforms.uMetallicFactor.value.toFixed(2)}`);
+            }
+
+              // i: 调整粗糙度因子
+            if (key === 'i') {
+                uniforms.uRoughnessFactor.value = uniforms.uRoughnessFactor.value > 2.0 ? 0.0 : uniforms.uRoughnessFactor.value + 0.2;
+                console.log(`粗糙度因子: ${uniforms.uRoughnessFactor.value.toFixed(2)}`);
+            }
+            
+            // T: 调整瓷砖大小
+            if (key === 't') {
+                uniforms.uTileSize.value = uniforms.uTileSize.value > 2.0 ? 0.2 : uniforms.uTileSize.value + 0.1;
+                console.log(`瓷砖大小: ${uniforms.uTileSize.value.toFixed(2)}`);
+            }
+            
+            // F: 调整雾气强度
+            if (key === 'f') {
+                uniforms.uFogDensity.value = uniforms.uFogDensity.value > 0.2 ? 0.00 : uniforms.uFogDensity.value + 0.001;
+                console.log(`雾气强度: ${uniforms.uFogDensity.value.toFixed(3)}`);
+            }
+            
+            // +: 增加光照强度
+            if (key === '=' || key === '+') {
+                uniforms.uLightIntensity.value *= 1.2;
+                console.log(`光照强度: ${uniforms.uLightIntensity.value.toFixed(2)}`);
+            }
+
+            // H: 调整模糊强度
+            if (key === 'h') {
+                uniforms.uBlurStrength.value = uniforms.uBlurStrength.value > 1.0 ? 0.0 : uniforms.uBlurStrength.value + 0.1;
+                console.log(`模糊强度: ${uniforms.uBlurStrength.value.toFixed(1)}`);
+            }
+            
+            // -: 减小光照强度
+            if (key === '-' || key === '_') {
+                uniforms.uLightIntensity.value *= 0.8;
+                console.log(`光照强度: ${uniforms.uLightIntensity.value.toFixed(2)}`);
+            }
+            
+            // [: 减少最大步数
+            if (key === '[') {
+                uniforms.uMaxSteps.value = Math.max(64, uniforms.uMaxSteps.value - 64);
+                console.log(`最大步数: ${uniforms.uMaxSteps.value}`);
+            }
+            
+            // ]: 增加最大步数
+            if (key === ']') {
+                uniforms.uMaxSteps.value = Math.min(1024, uniforms.uMaxSteps.value + 64);
+                console.log(`最大步数: ${uniforms.uMaxSteps.value}`);
+            }
+        });
+        
+        // ================== 启动动画循环 ==================
+        console.log("✅ 渲染器初始化完成");
+        console.log("📋 使用说明:");
+        console.log("  - WASD移动，鼠标拖拽视角");
+        console.log("  - 空格/E上升，Shift/Q下降");
+        console.log("  - R重置相机位置");
+        console.log("  - B切换调试模式，1-3切换调试视图");
+        console.log("  - N切换法线贴图，R调整粗糙度");
+        console.log("  - T调整瓷砖大小，F调整雾气强度");
+        console.log("  - +/-调整光照强度");
+        
+        animate();
+    </script>
+</body>
+</html>
