@@ -71,11 +71,11 @@
         <br>
         <h3>调试控制</h3>
         <div><kbd>N</kbd> - 切换法线贴图</div>
-        <div><kbd>R</kbd> - 调整粗糙度</div>
+        <div><kbd>I</kbd> - 调整粗糙度</div>
+        <div><kbd>K</kbd> - 调整金属度</div>
         <div><kbd>T</kbd> - 调整瓷砖大小</div>
         <div><kbd>F</kbd> - 调整雾气强度</div>
-        <div><kbd>B</kbd> - 切换调试模式</div>
-        <div><kbd>1-3</kbd> - 切换调试视图</div>
+       
     </div>
     
     <script type="module">
@@ -241,7 +241,7 @@
             uDisplacementMap: { value: displacementMap },
             
             // 场景控制
-            uTileSize: { value: 0.6 },
+            uTileSize: { value: 0.5 },
             uCameraOffset: { value: 0.1 },
             
             // 光线步进控制
@@ -256,7 +256,7 @@
             uLightIntensity: { value: 1.0 },
             
             // 雾气控制
-            uFogDensity: { value: 0.0 },
+            uFogDensity: { value: 0.001 },
             
             // 调试
             uDebugMode: { value: false },
@@ -1199,18 +1199,7 @@
         // ================== 调试控制 ==================
         window.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
-            
-            // 调试模式切换
-            if (key === 'b' || key === '`') {
-                uniforms.uDebugMode.value = !uniforms.uDebugMode.value;
-                console.log(`调试模式: ${uniforms.uDebugMode.value ? '开' : '关'}`);
-            }
-            
-            // 调试类型切换 (1-3)
-            if (key >= '1' && key <= '3') {
-                uniforms.uDebugType.value = parseInt(key) - 1;
-                console.log(`调试类型: ${['距离场', '深度', '法线'][uniforms.uDebugType.value]}`);
-            }
+
             
             // N: 切换法线贴图
             if (key === 'n') {
@@ -1284,8 +1273,7 @@
         console.log("  - WASD移动，鼠标拖拽视角");
         console.log("  - 空格/E上升，Shift/Q下降");
         console.log("  - R重置相机位置");
-        console.log("  - B切换调试模式，1-3切换调试视图");
-        console.log("  - N切换法线贴图，R调整粗糙度");
+        console.log("  - N切换法线贴图，I调整粗糙度，K调整金属度");
         console.log("  - T调整瓷砖大小，F调整雾气强度");
         console.log("  - +/-调整光照强度");
         
